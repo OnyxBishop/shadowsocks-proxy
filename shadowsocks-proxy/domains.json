@@ -1,0 +1,33 @@
+{
+  "description": "Whitelist доменов для YouTube Proxy. Включает только домены, необходимые для работы YouTube.",
+  "version": "1.0",
+  "domains": [
+    "youtube.com",
+    "youtu.be",
+    "ytimg.com",
+    "googlevideo.com",
+    "youtube-nocookie.com",
+    "ggpht.com",
+    "gvt1.com",
+    "gvt2.com",
+    "gvt3.com",
+    "gvt4.com"
+  ],
+  "google_services": [
+    "googleapis.com",
+    "gstatic.com",
+    "googleusercontent.com",
+    "google.com",
+    "accounts.google.com",
+    "doubleclick.net"
+  ],
+  "dns_servers": [
+    "8.8.8.8",
+    "8.8.4.4",
+    "1.1.1.1",
+    "1.0.0.1",
+    "dns.google",
+    "dns.google.com"
+  ],
+  "comment": "google_services нужны для аутентификации Google аккаунтов и рекламы. dns_servers — для резолвинга имён."
+}
