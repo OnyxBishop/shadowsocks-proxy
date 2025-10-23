@@ -607,6 +607,6 @@ Pull requests welcome! Please:
 4. Run linter: `ruff check .`
 
 ## Acknowledgements
-https://shadowsocks.org/doc/what-is-shadowsocks.html
-https://v2ray.com/en/index.html
-https://regex101.com/
+1. https://shadowsocks.org/doc/what-is-shadowsocks.html
+2. https://v2ray.com/en/index.html
+3. https://regex101.com/

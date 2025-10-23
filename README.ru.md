@@ -600,6 +600,6 @@ MIT License
 4. Запускайте линтер: `ruff check .`
 
 ## Полезные ссылки
-https://shadowsocks.org/doc/what-is-shadowsocks.html
-https://v2ray.com/ru/index.html
-https://regex101.com/
+1. https://shadowsocks.org/doc/what-is-shadowsocks.html
+2. https://v2ray.com/ru/index.html
+3. https://regex101.com/
