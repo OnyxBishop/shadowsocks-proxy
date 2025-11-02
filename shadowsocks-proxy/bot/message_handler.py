@@ -89,8 +89,7 @@ async def show_creds_callback(callback: CallbackQuery):
         f"🔑 Ваши учетные данные:\n\n"
         f"Username: <code>{username}</code>\n"
         f"Password: <code>{ss_pass}</code>\n\n"
-        f"Server: <code>{Config.PROXY_HOST}:{Config.PROXY_PORT}</code>\n"
-        f"Method: <code>{Config.SS_Method}</code>",
+        f"Server: <code>{Config.PROXY_HOST}:{Config.PROXY_PORT}</code>\n",
         parse_mode="HTML"
     )
     await callback.answer()
