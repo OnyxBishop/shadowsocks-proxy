@@ -1,2 +1,1 @@
-redis[hiredis]==7.0.0
 cryptography==46.0.3

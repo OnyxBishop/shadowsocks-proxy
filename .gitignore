@@ -54,6 +54,9 @@ logs/
 dump.rdb
 appendonly.aof
 
+# User credentials
+users.json
+
 # Testing
 .pytest_cache/
 .coverage

@@ -7,12 +7,13 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
-COPY proxy_server.py shadowsocks_handler.py domains_validator.py ss_password_utils.py domains.json ./
+COPY proxy_server.py shadowsocks_handler.py start.sh ./
 
-# Copy new directory structure
-COPY config/ ./config/
-COPY entities/ ./entities/
-COPY managers/ ./managers/
+# Copy bot code (optional)
+COPY bot/ ./bot/
+
+# Make startup script executable
+RUN chmod +x start.sh
 
 # Create non-root user for security
 RUN groupadd -g 1004 appgroup && \
@@ -21,4 +22,4 @@ RUN groupadd -g 1004 appgroup && \
 
 USER app
 
-CMD ["python", "-u", "proxy_server.py"]
+CMD ["./start.sh"]
