@@ -1,95 +1,69 @@
-import json
-import base64
-from pathlib import Path
-from datetime import datetime, timezone
+import httpx
 
 from aiogram import Router, F
 from aiogram.types import CallbackQuery
-from ss_password_utils import generate_ss_password, generate_credentials
 from config import Config
 
 router = Router()
-USERS_FILE = Path(__file__).parent.parent / "users.json"
 
 
-def load_users():
-    if not USERS_FILE.exists():
-        return {}
+@router.callback_query(F.data == "get_outline_key")
+async def get_outline_key_callback(callback: CallbackQuery):
+    if callback.from_user.id not in Config.admin_ids():
+        await callback.answer("Доступ запрещён", show_alert=True)
+        return
+
+    api_url = Config.OUTLINE_API_URL
+    if not api_url:
+        await callback.message.answer("Ошибка: URL API Outline не настроен.")
+        await callback.answer()
+        return
+
     try:
-        with open(USERS_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except json.JSONDecodeError:
-        return {}
+        async with httpx.AsyncClient(verify=False) as client:
+            response = await client.post(f"{api_url}/access-keys", timeout=10.0)
+            response.raise_for_status()
+            key_data = response.json()
 
+            # Извлекаем нужные данные из ответа API
+            # Пример успешного ответа:
+            # {
+            #   "id": "12345",
+            #   "name": "My Key",
+            #   "password": "some_password",
+            #   "port": 12345,
+            #   "method": "chacha20-ietf-poly1305",
+            #   "accessUrl": "ss://abcd...==@1.2.3.4:12345",
+            #   "streamingUrl": "ss://abcd...==@1.2.3.4:12345",
+            #   "dataLimit": null,
+            #   "usedBytes": 0,
+            #   "createdTimestampMs": 1234567890123,
+            #   "lastUsedTimestampMs": null
+            # }
 
-def save_user(user_id, username, ss_password):
-    users = load_users()
-    users[str(user_id)] = {
-        "user_id": user_id,
-        "username": username,
-        "ss_password": ss_password,
-        "created_at": datetime.now(timezone.utc).isoformat()
-    }
-    USERS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with open(USERS_FILE, "w", encoding="utf-8") as f:
-        json.dump(users, f, indent=2, ensure_ascii=False)
+            # Используем accessUrl для отправки пользователю, так как он содержит все данные для подключения
+            access_url = key_data.get('accessUrl', '')
+            key_name = key_data.get('name', 'Безымянный ключ (ID: ' + str(key_data.get('id', 'N/A')) + ')')
 
+            if not access_url:
+                await callback.message.answer("Ошибка: Не удалось получить URL доступа из API Outline.")
+                await callback.answer()
+                return
 
-@router.callback_query(F.data == "auto_config")
-async def auto_config_callback(callback: CallbackQuery):
-    if callback.from_user.id not in Config.admin_ids():
-        await callback.answer("Доступ запрещён", show_alert=True)
-        return
+            # Отправляем URL ключа пользователю
+            await callback.message.answer(
+                f"🔑 Новый ключ доступа Outline:\n\n"
+                f"Название: <code>{key_name}</code>\n\n"
+                f"Скопируйте и используйте этот URL в клиенте Outline:\n"
+                f"<code>{access_url}</code>",
+                parse_mode="HTML"
+            )
 
-    users = load_users()
-    user_id = callback.from_user.id
-    
-    if str(user_id) in users:
-        user_data = users[str(user_id)]
-        username = user_data["username"]
-        ss_pass = user_data["ss_password"]
-    else:
-        username = generate_credentials()
-        ss_pass = generate_ss_password(username=username, master_secret=Config.SS_Master_Secret)
-        save_user(user_id, username, ss_pass)
+    except httpx.HTTPStatusError as e:
+        await callback.message.answer(f"Ошибка API Outline (HTTP {e.response.status_code}): {e.response.text}")
+    except httpx.RequestError as e:
+        await callback.message.answer(f"Ошибка запроса к API Outline: {str(e)}")
+    except Exception as e:
+        await callback.message.answer(f"Произошла непредвиденная ошибка: {str(e)}")
 
-    userinfo = f"{Config.SS_Method}:{ss_pass}"
-    userinfo_b64 = base64.urlsafe_b64encode(userinfo.encode()).decode().rstrip('=')
-    remark = "Ramee_VPN"
-    ss_link = f"ss://{userinfo_b64}@{Config.PROXY_HOST}:{Config.PROXY_PORT}#{remark}"
-
-    await callback.message.answer(
-        f"✅ Конфигурация готова!\n\n"
-        f"Скопируйте ссылку и вставьте в приложение (V2Box, Shadowrocket и т.д.):  \n\n"
-        f"<code>{ss_link}</code>",
-        parse_mode="HTML"
-    )
-    await callback.answer()
-
-
-@router.callback_query(F.data == "show_creds")
-async def show_creds_callback(callback: CallbackQuery):
-    if callback.from_user.id not in Config.admin_ids():
-        await callback.answer("Доступ запрещён", show_alert=True)
-        return
-
-    users = load_users()
-    user_id = callback.from_user.id
-    
-    if str(user_id) in users:
-        user_data = users[str(user_id)]
-        username = user_data["username"]
-        ss_pass = user_data["ss_password"]
-    else:
-        username = generate_credentials()
-        ss_pass = generate_ss_password(username=username, master_secret=Config.SS_Master_Secret)
-        save_user(user_id, username, ss_pass)
-
-    await callback.message.answer(
-        f"🔑 Ваши учетные данные:\n\n"
-        f"Username: <code>{username}</code>\n"
-        f"Password: <code>{ss_pass}</code>\n\n"
-        f"Server: <code>{Config.PROXY_HOST}:{Config.PROXY_PORT}</code>\n",
-        parse_mode="HTML"
-    )
     await callback.answer()

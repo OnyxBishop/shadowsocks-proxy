@@ -1,36 +1,39 @@
 import asyncio
 import hashlib
 import hmac
-import json
 import logging
 import os
 import time
+import json
+from typing import Optional, Dict, List, Tuple
 from pathlib import Path
-from typing import Optional, Dict
 
 from cryptography.hazmat.primitives.ciphers.aead import ChaCha20Poly1305
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
+logger.setLevel(logging.DEBUG)
 
 
 class ShadowsocksServer:
-    """Pure Shadowsocks AEAD server without restrictions"""
+    """Shadowsocks AEAD server"""
 
     def __init__(self, buffer_size=65536):
+        logger.info(f"[SS-INIT] Initializing Shadowsocks server with buffer_size={buffer_size}")
         self.buffer_size = buffer_size
+
         # Get master secret from environment
         self.master_secret = os.getenv('SS_MASTER_SECRET', '')
         if not self.master_secret:
+            logger.error("[SS-INIT] SS_MASTER_SECRET not set!")
             raise ValueError("SS_MASTER_SECRET environment variable must be set")
-        
+
         # Path to users.json
         self.users_file = Path(__file__).parent / "users.json"
         self.users_cache: Dict[str, str] = {}  # username -> ss_password
         self.last_cache_update = 0
         self.cache_ttl = 5  # Refresh every 5 seconds
-        
-        logger.info("Shadowsocks server initialized")
+
+        logger.info("[SS-INIT] Shadowsocks server initialized successfully")
 
     @staticmethod
     def evp_bytes_to_key(password: str, key_len: int) -> bytes:
@@ -65,43 +68,30 @@ class ShadowsocksServer:
         prk = hkdf_extract(salt, master_key)
         return hkdf_expand(prk, b"ss-subkey", key_len)
 
-    def generate_ss_password(self, username: str) -> str:
-        """Generate deterministic SS password for username via HMAC-SHA256"""
-        return hmac.new(
-            self.master_secret.encode('utf-8'),
-            username.encode('utf-8'),
-            hashlib.sha256
-        ).hexdigest()[:32]
-    
     def load_users_from_json(self) -> Dict[str, str]:
-        """Load users from JSON file"""
+        """Load users from users.json and generate their SS passwords"""
         if not self.users_file.exists():
-            # Fallback to environment variable mode
-            username = os.getenv('SS_USERNAME', 'default_user')
-            password = self.generate_ss_password(username)
-            return {username: password}
-        
+            logger.warning(f"[SS-CACHE] users.json not found at {self.users_file}")
+            return {}
+
         try:
             with open(self.users_file, 'r', encoding='utf-8') as f:
                 users_data = json.load(f)
-            
-            # Convert to username -> password dict
-            result = {}
+
+            users_dict = {}
             for user_id, user_info in users_data.items():
                 username = user_info.get('username')
                 ss_password = user_info.get('ss_password')
                 if username and ss_password:
-                    result[username] = ss_password
-            
-            logger.info(f"Loaded {len(result)} users from JSON")
-            return result
-        except (json.JSONDecodeError, IOError) as e:
-            logger.error(f"Failed to load users.json: {e}")
-            # Fallback to environment variable mode
-            username = os.getenv('SS_USERNAME', 'default_user')
-            password = self.generate_ss_password(username)
-            return {username: password}
-    
+                    users_dict[username] = ss_password
+
+            logger.info(f"[SS-CACHE] Loaded {len(users_dict)} users from users.json")
+            return users_dict
+
+        except Exception as e:
+            logger.error(f"[SS-CACHE] Error loading users.json: {e}")
+            return {}
+
     def refresh_users_cache(self):
         """Refresh users cache if TTL expired"""
         now = time.time()
@@ -112,10 +102,13 @@ class ShadowsocksServer:
     async def handle_connection(self, reader, writer):
         """Handle Shadowsocks connection"""
         peer_ip, peer_port = writer.get_extra_info("peername")
+        connection_id = f"ss_{peer_ip}:{peer_port}_{time.time()}"
+        username = None
 
         logger.info(f"[SS] New connection from {peer_ip}:{peer_port}")
 
         try:
+            # Пытаемся прочитать первые 32 байта (соль SS)
             try:
                 salt = await asyncio.wait_for(reader.readexactly(32), timeout=5)
             except (asyncio.IncompleteReadError, asyncio.TimeoutError) as e:
@@ -124,43 +117,45 @@ class ShadowsocksServer:
                 return
 
             length_chunk = await reader.readexactly(18)
-            
+
             # Refresh users cache and try to identify user
             self.refresh_users_cache()
-            
+
             username = None
             ss_password = None
-            
+
+            logger.debug(f"[SS-CONN] Trying to identify user from {len(self.users_cache)} cached users")
             # Try to decrypt with each user's password
             for test_username, test_password in self.users_cache.items():
                 try:
                     test_key = self.derive_key(test_password, salt, 32)
                     test_aead = ChaCha20Poly1305(test_key)
                     test_nonce = b'\x00' * 12
-                    
+
                     # Try to decrypt length chunk
                     payload_length_bytes = test_aead.decrypt(test_nonce, length_chunk, None)
                     payload_length = int.from_bytes(payload_length_bytes, 'big')
-                    
+
                     # Valid payload length range
                     if 0 < payload_length <= 0x3FFF:
                         username = test_username
                         ss_password = test_password
-                        logger.info(f"[SS] Identified user: {username}")
+                        logger.info(f"[SS-CONN] ✅ Authenticated user: {username} from {peer_ip}")
                         break
                 except Exception:
                     continue
-            
+
             if not username or not ss_password:
-                logger.warning(f"[SS] Could not identify user from {peer_ip}")
+                logger.warning(f"[SS-CONN] ❌ Could not identify user from {peer_ip}")
                 writer.close()
+                await writer.wait_closed()
                 return
 
+            # Continue with decryption
             key = self.derive_key(ss_password, salt, 32)
             aead = ChaCha20Poly1305(key)
 
             nonce = b'\x00' * 12
-            # We already decrypted and validated this in the user identification step
             payload_length_bytes = aead.decrypt(nonce, length_chunk, None)
             payload_length = int.from_bytes(payload_length_bytes, 'big')
 
@@ -175,31 +170,31 @@ class ShadowsocksServer:
             payload_chunk = await reader.readexactly(payload_length + 16)
             payload = aead.decrypt(nonce, payload_chunk, None)
 
-            # Parse destination address
+            # Parse address
             addr_type = payload[0]
             header_len = 0
 
             if addr_type == 1:  # IPv4
                 target_host = '.'.join(str(b) for b in payload[1:5])
                 target_port = int.from_bytes(payload[5:7], 'big')
-                header_len = 7
+                header_len = 7  # 1 (type) + 4 (IPv4) + 2 (port)
             elif addr_type == 3:  # Domain
                 domain_len = payload[1]
                 target_host = payload[2:2 + domain_len].decode()
                 target_port = int.from_bytes(payload[2 + domain_len:4 + domain_len], 'big')
-                header_len = 1 + 1 + domain_len + 2
+                header_len = 1 + 1 + domain_len + 2  # type + len + domain + port
             elif addr_type == 4:  # IPv6
                 target_host = ':'.join(f'{payload[i]:02x}{payload[i + 1]:02x}' for i in range(1, 17, 2))
                 target_port = int.from_bytes(payload[17:19], 'big')
-                header_len = 19
+                header_len = 19  # 1 (type) + 16 (IPv6) + 2 (port)
             else:
-                logger.warning(f"[SS] Unknown address type: {addr_type}")
                 writer.close()
                 return
 
             initial_data = payload[header_len:] if len(payload) > header_len else b''
 
             logger.info(f"[SS] {username} -> {target_host}:{target_port} (initial data: {len(initial_data)} bytes)")
+            logger.debug(f"[SS] Trying to connect to {target_host}:{target_port}")
 
             try:
                 remote_reader, remote_writer = await asyncio.open_connection(target_host, target_port)
@@ -207,6 +202,7 @@ class ShadowsocksServer:
             except Exception as e:
                 logger.error(f"[SS] Connection failed to {target_host}:{target_port}: {e}")
                 writer.close()
+                await writer.wait_closed()
                 return
 
             # Generate response salt
@@ -237,10 +233,14 @@ class ShadowsocksServer:
                 if isinstance(result, Exception):
                     logger.error(f"[SS] {username}: pipe task {i} failed: {result}")
 
+        except asyncio.TimeoutError:
+            logger.warning(f"[SS-CONN] ⏱️ Timeout for connection {connection_id}")
         except Exception as e:
             logger.error(f"[SS] Error: {e}", exc_info=True)
         finally:
             writer.close()
+            await writer.wait_closed()
+            logger.debug(f"[SS-CONN] Connection closed: {connection_id}")
 
     def _increment_nonce(self, nonce: bytes) -> bytes:
         counter = int.from_bytes(nonce, 'little')
@@ -254,6 +254,7 @@ class ShadowsocksServer:
             packet_count = 0
             while not reader.at_eof():
                 try:
+                    logger.debug(f"[PIPE-DEC] waiting to read 18 bytes of length header")
                     encrypted_length = await asyncio.wait_for(reader.readexactly(18), timeout=300)
                 except asyncio.IncompleteReadError as e:
                     logger.debug(f"[SS] {direction} {username}: IncompleteReadError on length: {e}")
@@ -264,10 +265,15 @@ class ShadowsocksServer:
 
                 length_bytes = aead.decrypt(nonce, encrypted_length, None)
                 nonce = self._increment_nonce(nonce)
+                logger.debug(f"[PIPE-DEC] length_bytes from aead.dycrypt: {length_bytes}")
 
                 payload_length = int.from_bytes(length_bytes, 'big')
+                logger.debug(f"[PIPE-DEC] payload_length: {payload_length}")
 
+                logger.debug(f"[PIPE-DEC] start encrypted_payload")
                 encrypted_payload = await reader.readexactly(payload_length + 16)
+                logger.debug(f"[PIPE-DEC] encrypted_payload: {encrypted_payload}")
+
                 data = aead.decrypt(nonce, encrypted_payload, None)
                 nonce = self._increment_nonce(nonce)
 
@@ -302,6 +308,7 @@ class ShadowsocksServer:
 
             while not reader.at_eof():
                 data = await asyncio.wait_for(reader.read(self.buffer_size), timeout=300)
+                logger.debug(f"[PIPE-ENC] read {len(data)} bytes to send")
                 if not data:
                     break
 
@@ -323,7 +330,7 @@ class ShadowsocksServer:
 
                     writer.write(encrypted_length + encrypted_payload)
                     offset += len(chunk)
-                
+
                 await writer.drain()
 
             logger.info(f"[SS] {direction} {username}: finished, total {total_bytes} bytes")

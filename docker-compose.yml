@@ -12,17 +12,7 @@ services:
     ports:
       - "1080:1080"
     environment:
-      # Proxy configuration
-      - PROXY_HOST=0.0.0.0
-      - PROXY_PORT=1080
-      - PROXY_PROTOCOL=shadowsocks
-      # Shadowsocks master secret for password generation
-      - SS_MASTER_SECRET=${SS_MASTER_SECRET}
-      # Optional: specify username (default is 'default_user')
-      - SS_USERNAME=${SS_USERNAME:-default_user}
-      # Bot configuration (optional)
       - BOT_TOKEN=${BOT_TOKEN:-}
-      - SS_METHOD=${SS_METHOD:-chacha20-ietf-poly1305}
       - ADMIN_IDS=${ADMIN_IDS:-}
     networks:
       - proxy-network
@@ -30,13 +20,6 @@ services:
     read_only: true
     tmpfs:
       - /tmp:noexec,nosuid,nodev,size=100m
-    # TCP optimization
-    sysctls:
-      - net.ipv4.tcp_keepalive_time=600
-      - net.ipv4.tcp_keepalive_intvl=60
-      - net.ipv4.tcp_keepalive_probes=3
-      - net.core.somaxconn=1024
-    # Capabilities
     cap_drop:
       - ALL
     cap_add:
@@ -47,7 +30,7 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '2.0'
+          cpus: '1.0'
           memory: 512M
         reservations:
           cpus: '0.5'

@@ -4,21 +4,29 @@ import logging
 import os
 import signal
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 
 class CustomProxyServer:
     def __init__(self, protocol: str = "shadowsocks"):
+        logger.info(f"[INIT] CustomProxyServer initializing with protocol={protocol}")
         self.server = None
         self.buffer_size = 65536
         self.protocol = protocol.lower()
         self.ss_server = None
+        logger.info(f"[INIT] CustomProxyServer initialized, protocol={self.protocol}")
 
     async def init(self):
+        logger.info("[INIT] Starting server initialization...")
         from shadowsocks_handler import ShadowsocksServer
-        self.ss_server = ShadowsocksServer(self.buffer_size)
+        logger.info("[INIT] Imported ShadowsocksServer module")
+        self.ss_server = ShadowsocksServer(buffer_size=self.buffer_size)
+        logger.info("[INIT] ShadowsocksServer instance created")
 
     async def custom_handler(self, reader, writer):
         if self.protocol == "shadowsocks":
@@ -26,13 +34,18 @@ class CustomProxyServer:
             return
 
     async def start(self, host: str = "0.0.0.0", port: int = 1080):
+        logger.info(f"[START] Starting server on {host}:{port}...")
         await self.init()
+        logger.info("[START] Initialization complete")
 
+        logger.info(f"[START] Creating asyncio server on {host}:{port}...")
         self.server = await asyncio.start_server(
             self.custom_handler, host, port
         )
+        logger.info(f"[START] Asyncio server created successfully")
 
-        logger.info(f"{self.protocol.upper()} proxy server started on {host}:{port}")
+        logger.info(f"🚀 {self.protocol.upper()} proxy server STARTED on {host}:{port}")
+        logger.info(f"[START] Server is now accepting connections")
 
         async with self.server:
             await self.server.serve_forever()
@@ -54,13 +67,16 @@ async def setup_optimizations():
 
 
 async def main():
+    logger.info("[MAIN] Starting proxy server in standalone mode...")
     await setup_optimizations()
 
     host = os.getenv("PROXY_HOST", "0.0.0.0")
     port = int(os.getenv("PROXY_PORT", "1080"))
     protocol = os.getenv("PROXY_PROTOCOL", "shadowsocks")
+    
+    logger.info(f"[MAIN] Configuration: host={host}, port={port}, protocol={protocol}")
 
-    if protocol != "shadowsocks":
+    if protocol.lower() != "shadowsocks":
         logger.error(f"Unknown protocol: {protocol}")
         raise ValueError("PROXY_PROTOCOL must be 'shadowsocks'")
 
@@ -69,36 +85,28 @@ async def main():
     shutdown_event = asyncio.Event()
 
     def handle_shutdown(sig, frame):
-        logger.info(f"Received signal {sig}, initiating graceful shutdown...")
+        logger.info(f"\n⏹️ Received signal {sig}, initiating shutdown...")
         shutdown_event.set()
 
-    signal.signal(signal.SIGTERM, handle_shutdown)
     signal.signal(signal.SIGINT, handle_shutdown)
+    signal.signal(signal.SIGTERM, handle_shutdown)
 
-    server_task = asyncio.create_task(proxy.start(host=host, port=port))
+    server_task = asyncio.create_task(proxy.start(host, port))
+    logger.info("[MAIN] Server task created")
 
     await shutdown_event.wait()
+    logger.info("[MAIN] Shutdown event received")
 
-    logger.info("🛑 Shutdown signal received, starting graceful shutdown...")
-
-    logger.info("⏳ Stopping proxy server...")
-    if proxy.server:
-        proxy.server.close()
-        await proxy.server.wait_closed()
-        logger.info("✅ Proxy server stopped")
-
-    logger.info("⏳ Cancelling server_task...")
+    logger.info("⏳ Cancelling server task...")
     server_task.cancel()
+
     try:
         await server_task
     except asyncio.CancelledError:
-        logger.info("✅ Server_task cancelled")
+        logger.info("✅ Server task cancelled")
 
-    logger.info("🎉 Graceful shutdown complete, all connections closed")
+    logger.info("🎉 Graceful shutdown complete")
 
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        logger.info("Interrupted by user")
+    asyncio.run(main())

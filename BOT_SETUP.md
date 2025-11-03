@@ -61,7 +61,7 @@ python main.py
 **Linux/Mac:**
 ```bash
 cd shadowsocks-proxy
-./start.sh
+./start.sh.save
 ```
 
 **Windows:**

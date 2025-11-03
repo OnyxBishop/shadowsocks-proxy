@@ -6,9 +6,6 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application code
-COPY proxy_server.py shadowsocks_handler.py start.sh ./
-
 # Copy bot code (optional)
 COPY bot/ ./bot/
 
