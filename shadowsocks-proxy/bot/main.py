@@ -60,18 +60,6 @@ async def main():
             reply_markup=get_keyboard()
         )
 
-    # Start proxy server in background
-    try:
-        proxy = CustomProxyServer(protocol="shadowsocks")
-        proxy_task = asyncio.create_task(
-            proxy.start(host=Config.PROXY_HOST, port=Config.PROXY_PORT)
-        )
-        logger.info("✅ Proxy server task created")
-    except Exception as e:
-        logger.error(f"❌ Failed to start proxy server: {e}")
-        await bot.session.close()
-        return
-
     # Start bot polling
     logger.info("✅ Starting bot polling...")
     try:
@@ -79,7 +67,6 @@ async def main():
     except KeyboardInterrupt:
         logger.info("⏹️ Stopping bot...")
     finally:
-        proxy_task.cancel()
         await bot.session.close()
         logger.info("✅ Shutdown complete")
 
